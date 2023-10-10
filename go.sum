@@ -1,2 +1,4 @@
+github.com/c4pt0r/log v0.0.0-20211004143616-aa6380016a47 h1:I7bb8MbleLvoW6scHXngCQaroNa9slYTaYOaQEsv2TQ=
+github.com/c4pt0r/log v0.0.0-20211004143616-aa6380016a47/go.mod h1:N78ACK7UQq5KjTLWQPw2A7UuzX712vN9akunb8ydlck=
 github.com/tetratelabs/wazero v1.5.0 h1:Yz3fZHivfDiZFUXnWMPUoiW7s8tC1sjdBtlJn08qYa0=
 github.com/tetratelabs/wazero v1.5.0/go.mod h1:0U0G41+ochRKoPKCJlh0jMg1CHkyfK8kDqiirMmKY8A=

@@ -2,10 +2,10 @@ package w2
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
-	"fmt"
-	"log/slog"
 
+	"github.com/c4pt0r/log"
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/api"
 	"github.com/tetratelabs/wazero/imports/wasi_snapshot_preview1"
@@ -32,26 +32,35 @@ type Host struct {
 	runtimePublicHostFuncs map[string]HostFunc
 }
 
+type CallReq struct {
+	Method string                 `json:"method"`
+	Params map[string]interface{} `json:"params"`
+}
+type CallResp struct {
+	Result interface{} `json:"result,omitempty"`
+	Error  string      `json:"error,omitempty"`
+}
+
 func _logString(ctx context.Context, m api.Module, offset, byteCount uint32) {
 	buf, ok := m.Memory().Read(offset, byteCount)
 	if !ok {
-		slog.Error("Memory.Read(%d, %d) out of range", offset, byteCount)
+		log.Errorf("Memory.Read(%d, %d) out of range", offset, byteCount)
 		return
 	}
-	fmt.Println(string(buf))
+	log.Infof("wasm log: %s", string(buf))
 }
 
 func _callHost(ctx context.Context, m api.Module, offset, byteCount uint32) uint64 {
 	buf, ok := m.Memory().Read(offset, byteCount)
 	if !ok {
-		slog.Error("Memory.Read(%d, %d) out of range", offset, byteCount)
+		log.Errorf("Memory.Read(%d, %d) out of range", offset, byteCount)
 		return 0
 	}
 
 	// Call the host function.
 	host := extractHost(ctx)
 	if host == nil {
-		slog.Error("host not found in context")
+		log.Errorf("host not found in context")
 		return 0
 	}
 
@@ -61,16 +70,20 @@ func _callHost(ctx context.Context, m api.Module, offset, byteCount uint32) uint
 	// Allocate memory for the return value. Wasm component should free it.
 	ptr, err := m.ExportedFunction("malloc").Call(context.Background(), uint64(len(ret)))
 	if err != nil {
-		slog.Error("malloc failed: %v", err)
+		log.Errorf("malloc failed: %v", err)
 		return 0
 	}
 	if !m.Memory().Write(uint32(ptr[0]), []byte(ret)) {
-		slog.Error("Memory.Write(%d, %d) out of range of memory size %d", ptr[0], len(ret), m.Memory().Size())
+		log.Errorf("Memory.Write(%d, %d) out of range of memory size %d", ptr[0], len(ret), m.Memory().Size())
 		return 0
 	}
 	retPtr := uint32(ptr[0])
 	retSize := uint32(len(ret))
 	return uint64(retPtr)<<32 | uint64(retSize)
+}
+
+func NewHost() *Host {
+	return &Host{}
 }
 
 func (h *Host) Init() error {
@@ -95,7 +108,7 @@ func (h *Host) Init() error {
 	return nil
 }
 
-func (h *Host) LoadMod(ctx context.Context, modWasmCode []byte) error {
+func (h *Host) LoadMod(ctx context.Context, modName string, modWasmCode []byte) error {
 	if h.r == nil {
 		return errors.New("host not init")
 	}
@@ -103,7 +116,8 @@ func (h *Host) LoadMod(ctx context.Context, modWasmCode []byte) error {
 	if err != nil {
 		return err
 	}
-	h.loadedMods[mod.Name()] = mod
+	h.loadedMods[modName] = mod
+	log.Infof("loaded module: %s", modName)
 	return nil
 }
 
@@ -111,10 +125,20 @@ func (h *Host) HostContext(ctx context.Context) context.Context {
 	return context.WithValue(ctx, CtxKey_Host, h)
 }
 
-func (h *Host) Call(ctx context.Context, modName string, funcName string, payload []byte) (ret []byte, err error) {
+func (h *Host) Call(ctx context.Context, modName string, method string, params interface{}) (ret interface{}, err error) {
 	mod, ok := h.loadedMods[modName]
 	if !ok {
 		return nil, errors.New("module not found: " + modName)
+	}
+
+	req := CallReq{
+		Method: method,
+		Params: params.(map[string]interface{}),
+	}
+
+	payload, err := json.Marshal(req)
+	if err != nil {
+		return nil, err
 	}
 
 	doFunc := mod.ExportedFunction("do")
@@ -130,7 +154,7 @@ func (h *Host) Call(ctx context.Context, modName string, funcName string, payloa
 	argPtr := uint32(mallocRet[0])
 
 	if !mod.Memory().Write(uint32(argPtr), payload) {
-		slog.Error("Memory.Write(%d, %d) out of range of memory size %d",
+		log.Errorf("Memory.Write(%d, %d) out of range of memory size %d",
 			argPtr, argSize, mod.Memory().Size())
 		return nil, errors.New("memory out of range")
 	}
@@ -149,17 +173,25 @@ func (h *Host) Call(ctx context.Context, modName string, funcName string, payloa
 		defer func() {
 			_, err := free.Call(ctx, uint64(retPtr))
 			if err != nil {
-				slog.Error("free failed: %v", err)
+				log.Errorf("free failed: %v", err)
 			}
 		}()
 	}
 
 	// The pointer is a linear memory offset, which is where we write the name.
 	if bytes, ok := mod.Memory().Read(retPtr, retSize); !ok {
-		slog.Error("Memory.Read(%d, %d) out of range of memory size %d",
+		log.Errorf("Memory.Read(%d, %d) out of range of memory size %d",
 			retPtr, retSize, mod.Memory().Size())
 		return nil, errors.New("memory out of range")
 	} else {
-		return bytes, nil
+		var ret CallResp
+		err := json.Unmarshal(bytes, &ret)
+		if err != nil {
+			return nil, err
+		}
+		if ret.Error != "" {
+			return nil, errors.New(ret.Error)
+		}
+		return ret.Result, nil
 	}
 }
