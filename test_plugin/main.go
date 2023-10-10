@@ -36,22 +36,40 @@ var RegisteredFunctions = map[string]PluginFunc{
 		if !ok {
 			return nil, errors.New("url is not a string")
 		}
-		// TODO: callHost warpper
-		return "TODO", nil
+		resp, err := callHost("curl", map[string]interface{}{"url": url})
+		if err != nil {
+			return nil, err
+		}
+		log("curl: " + toJSON(resp))
+		return "OK", nil
 	},
 }
 
 /* W2 helper functions */
 //go:wasmimport env call_host
 func _callHost(paramPtr, paramSize uint32) uint64
-func callHost(buf string) string {
-	ptr, size := gostr_to_ptr(buf)
+func callHost(methodName string, params map[string]interface{}) (result interface{}, err error) {
+	payload := CallReq{Method: methodName, Params: params}
+	buf, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	ptr, size := gostr_to_ptr(string(buf))
 	ret := _callHost(ptr, size)
 	retPtr, retSize := unpack_uint64_to_uint32(ret)
 	if retPtr != 0 {
 		defer free_ptr(retPtr)
 	}
-	return ptr_to_gostr(retPtr, retSize)
+	respStr := ptr_to_gostr(retPtr, retSize)
+	var resp CallResp
+	err = json.Unmarshal([]byte(respStr), &resp)
+	if err != nil {
+		return nil, err
+	}
+	if resp.Error != "" {
+		return nil, errors.New(resp.Error)
+	}
+	return resp.Result, nil
 }
 
 //go:wasmimport env log

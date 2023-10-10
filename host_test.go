@@ -37,4 +37,13 @@ func TestCallFunc(t *testing.T) {
 		t.Fatal(err)
 	}
 	fmt.Println(ret)
+
+	ret, err = host.Call(ctx, "hello_mod", "curl", map[string]interface{}{
+		"url": "google.com",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fmt.Println(ret)
+
 }

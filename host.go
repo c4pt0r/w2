@@ -64,8 +64,10 @@ func _callHost(ctx context.Context, m api.Module, offset, byteCount uint32) uint
 		return 0
 	}
 
-	// TODO: handle function calls
-	ret := []byte("hello from host, you're calling:" + string(buf))
+	log.Info(string(buf))
+	ret := toJSON(CallResp{
+		Result: "Calling " + string(buf) + " OK",
+	})
 
 	// Allocate memory for the return value. Wasm component should free it.
 	ptr, err := m.ExportedFunction("malloc").Call(context.Background(), uint64(len(ret)))
@@ -121,11 +123,8 @@ func (h *Host) LoadMod(ctx context.Context, modName string, modWasmCode []byte) 
 	return nil
 }
 
-func (h *Host) HostContext(ctx context.Context) context.Context {
-	return context.WithValue(ctx, CtxKey_Host, h)
-}
-
-func (h *Host) Call(ctx context.Context, modName string, method string, params interface{}) (ret interface{}, err error) {
+func (h *Host) Call(ctx context.Context, modName string, method string, params map[string]interface{}) (ret interface{}, err error) {
+	ctx = context.WithValue(ctx, CtxKey_Host, h)
 	mod, ok := h.loadedMods[modName]
 	if !ok {
 		return nil, errors.New("module not found: " + modName)
@@ -133,7 +132,7 @@ func (h *Host) Call(ctx context.Context, modName string, method string, params i
 
 	req := CallReq{
 		Method: method,
-		Params: params.(map[string]interface{}),
+		Params: params,
 	}
 
 	payload, err := json.Marshal(req)
