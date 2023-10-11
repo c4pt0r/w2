@@ -8,47 +8,53 @@ import (
 	"unsafe"
 )
 
-type PluginFunc func(param map[string]interface{}) (result interface{}, err error)
+type ParamType map[string]interface{}
+type ResultType interface{}
+type PluginFunc func(param ParamType) (result ResultType, err error)
 
 type CallReq struct {
-	Method string                 `json:"method"`
-	Params map[string]interface{} `json:"params"`
+	Method string    `json:"method"`
+	Params ParamType `json:"params"`
 }
 type CallResp struct {
-	Result interface{} `json:"result,omitempty"`
-	Error  string      `json:"error,omitempty"`
+	Result ResultType `json:"result,omitempty"`
+	Error  string     `json:"error,omitempty"`
 }
 
 var RegisteredFunctions = map[string]PluginFunc{
-	"echo": func(param map[string]interface{}) (result interface{}, err error) {
-		var msg string
-		for k, v := range param {
-			// output log in the host's console
-			log(k + ": " + toJSON(v))
-			// generate the result
-			msg += k + "=>" + toJSON(v) + "\n"
+	"stat": func(param ParamType) (result ResultType, err error) {
+		resp, err := callHost("list_builtins", nil)
+		if err != nil {
+			return nil, err
 		}
-		return msg, nil
+		log("stat: " + to_json(resp))
+		return "OK", nil
 	},
-
-	"curl": func(param map[string]interface{}) (result interface{}, err error) {
+	"ping": func(param ParamType) (result ResultType, err error) {
+		return "pong", nil
+	},
+	"echo": func(param ParamType) (result ResultType, err error) {
+		return param, nil
+	},
+	"curl": func(param ParamType) (result ResultType, err error) {
 		url, ok := param["url"].(string)
 		if !ok {
 			return nil, errors.New("url is not a string")
 		}
-		resp, err := callHost("curl", map[string]interface{}{"url": url})
+		resp, err := callHost("curl", ParamType{"url": url})
 		if err != nil {
 			return nil, err
 		}
-		log("curl: " + toJSON(resp))
+		log("curl: " + to_json(resp))
 		return "OK", nil
 	},
 }
 
 /* W2 helper functions */
+
 //go:wasmimport env call_host
 func _callHost(paramPtr, paramSize uint32) uint64
-func callHost(methodName string, params map[string]interface{}) (result interface{}, err error) {
+func callHost(methodName string, params ParamType) (result ResultType, err error) {
 	payload := CallReq{Method: methodName, Params: params}
 	buf, err := json.Marshal(payload)
 	if err != nil {
@@ -90,15 +96,6 @@ func _do(ptr, size uint32) (ptrSize uint64) {
 	return (uint64(ptr) << uint64(32)) | uint64(size)
 }
 
-func toJSON(v interface{}) string {
-	buf, err := json.Marshal(v)
-	if err != nil {
-		return ""
-	}
-	return string(buf)
-}
-
-/* main functions */
 func do(payload string) string {
 	// dispatch to the right function
 	// payload is a JSON string
@@ -114,17 +111,17 @@ func do(payload string) string {
 	var req CallReq
 	err := json.Unmarshal([]byte(payload), &req)
 	if err != nil {
-		return toJSON(CallResp{Error: err.Error()})
+		return to_json(CallResp{Error: err.Error()})
 	}
 
 	if fn, ok := RegisteredFunctions[req.Method]; ok {
 		result, err := fn(req.Params)
 		if err != nil {
-			return toJSON(CallResp{Error: err.Error()})
+			return to_json(CallResp{Error: err.Error()})
 		}
-		return toJSON(CallResp{Result: result})
+		return to_json(CallResp{Result: result})
 	} else {
-		return toJSON(CallResp{Error: "method not found"})
+		return to_json(CallResp{Error: "method not found"})
 	}
 }
 
@@ -171,6 +168,14 @@ func pack_uint32_to_uint64(ptr, size uint32) uint64 {
 func uint64_to_gostr(v uint64) (s string, ptr uint32) {
 	ptr, size := unpack_uint64_to_uint32(v)
 	return ptr_to_gostr(ptr, size), ptr
+}
+
+func to_json(v interface{}) string {
+	buf, err := json.Marshal(v)
+	if err != nil {
+		return ""
+	}
+	return string(buf)
 }
 
 func main() {}

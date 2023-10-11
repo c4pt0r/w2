@@ -24,21 +24,46 @@ func extractHost(ctx context.Context) *Host {
 	return nil
 }
 
-type HostFunc func(payload []byte) (ret []byte, err error)
+type ParamType map[string]interface{}
+type ResultType interface{}
+type HostFunc func(param ParamType) (result ResultType, err error)
 
 type Host struct {
-	r                      wazero.Runtime
-	loadedMods             map[string]api.Module
-	runtimePublicHostFuncs map[string]HostFunc
+	rt               wazero.Runtime
+	loadedMods       map[string]api.Module
+	builtinHostFuncs map[string]HostFunc
 }
 
 type CallReq struct {
-	Method string                 `json:"method"`
-	Params map[string]interface{} `json:"params"`
+	Method string    `json:"method"`
+	Params ParamType `json:"params"`
 }
+
 type CallResp struct {
-	Result interface{} `json:"result,omitempty"`
-	Error  string      `json:"error,omitempty"`
+	Result ResultType `json:"result,omitempty"`
+	Error  string     `json:"error,omitempty"`
+}
+
+func NewHost() *Host {
+	h := &Host{}
+	builtinHostFuncs := map[string]HostFunc{
+		"list_modules": func(param ParamType) (ResultType, error) {
+			mods := make([]string, 0, len(h.loadedMods))
+			for k := range h.loadedMods {
+				mods = append(mods, k)
+			}
+			return mods, nil
+		},
+		"list_builtins": func(param ParamType) (ResultType, error) {
+			builtins := make([]string, 0, len(h.builtinHostFuncs))
+			for k := range h.builtinHostFuncs {
+				builtins = append(builtins, k)
+			}
+			return builtins, nil
+		},
+	}
+	h.builtinHostFuncs = builtinHostFuncs
+	return h
 }
 
 func _logString(ctx context.Context, m api.Module, offset, byteCount uint32) {
@@ -47,7 +72,7 @@ func _logString(ctx context.Context, m api.Module, offset, byteCount uint32) {
 		log.Errorf("Memory.Read(%d, %d) out of range", offset, byteCount)
 		return
 	}
-	log.Infof("wasm log: %s", string(buf))
+	log.Infof("log from wasm: %s", string(buf))
 }
 
 func _callHost(ctx context.Context, m api.Module, offset, byteCount uint32) uint64 {
@@ -64,11 +89,28 @@ func _callHost(ctx context.Context, m api.Module, offset, byteCount uint32) uint
 		return 0
 	}
 
-	log.Info(string(buf))
-	ret := toJSON(CallResp{
-		Result: "Calling " + string(buf) + " OK",
-	})
+	var req CallReq
+	var resp CallResp
+	// delegate to builtin host functions
+	err := json.Unmarshal(buf, &req)
+	if err != nil {
+		log.Errorf("json.Unmarshal failed: %v", err)
+		resp.Error = err.Error()
+		// quick return here
+		goto E
+	}
+	if f, ok := host.builtinHostFuncs[req.Method]; ok {
+		resp.Result, err = f(req.Params)
+		if err != nil {
+			log.Errorf("builtin host function %s failed: %v", req.Method, err)
+			resp.Error = err.Error()
+		}
+	} else {
+		resp.Error = "host function not found"
+	}
 
+E:
+	ret := toJSON(resp)
 	// Allocate memory for the return value. Wasm component should free it.
 	ptr, err := m.ExportedFunction("malloc").Call(context.Background(), uint64(len(ret)))
 	if err != nil {
@@ -82,10 +124,6 @@ func _callHost(ctx context.Context, m api.Module, offset, byteCount uint32) uint
 	retPtr := uint32(ptr[0])
 	retSize := uint32(len(ret))
 	return uint64(retPtr)<<32 | uint64(retSize)
-}
-
-func NewHost() *Host {
-	return &Host{}
 }
 
 func (h *Host) Init() error {
@@ -105,16 +143,16 @@ func (h *Host) Init() error {
 	// Note: testdata/greet.go doesn't use WASI, but TinyGo needs it to
 	// implement functions such as panic.
 	wasi_snapshot_preview1.MustInstantiate(ctx, r)
-	h.r = r
+	h.rt = r
 	h.loadedMods = make(map[string]api.Module)
 	return nil
 }
 
 func (h *Host) LoadMod(ctx context.Context, modName string, modWasmCode []byte) error {
-	if h.r == nil {
+	if h.rt == nil {
 		return errors.New("host not init")
 	}
-	mod, err := h.r.Instantiate(ctx, modWasmCode)
+	mod, err := h.rt.Instantiate(ctx, modWasmCode)
 	if err != nil {
 		return err
 	}
@@ -123,7 +161,7 @@ func (h *Host) LoadMod(ctx context.Context, modName string, modWasmCode []byte) 
 	return nil
 }
 
-func (h *Host) Call(ctx context.Context, modName string, method string, params map[string]interface{}) (ret interface{}, err error) {
+func (h *Host) Call(ctx context.Context, modName string, method string, params ParamType) (ret ResultType, err error) {
 	ctx = context.WithValue(ctx, CtxKey_Host, h)
 	mod, ok := h.loadedMods[modName]
 	if !ok {
