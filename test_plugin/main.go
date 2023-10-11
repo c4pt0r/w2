@@ -21,31 +21,32 @@ type CallResp struct {
 	Error  string     `json:"error,omitempty"`
 }
 
+// plugin funcs
 var RegisteredFunctions = map[string]PluginFunc{
-	"stat": func(param ParamType) (result ResultType, err error) {
+	"stat": func(param ParamType) (ResultType, error) {
 		resp, err := callHost("list_builtins", nil)
 		if err != nil {
 			return nil, err
 		}
 		log("stat: " + to_json(resp))
-		return "OK", nil
+		return resp, nil
 	},
-	"ping": func(param ParamType) (result ResultType, err error) {
+	"ping": func(param ParamType) (ResultType, error) {
 		return "pong", nil
 	},
-	"echo": func(param ParamType) (result ResultType, err error) {
+	"echo": func(param ParamType) (ResultType, error) {
 		return param, nil
 	},
-	"curl": func(param ParamType) (result ResultType, err error) {
+	"curl": func(param ParamType) (ResultType, error) {
 		url, ok := param["url"].(string)
 		if !ok {
-			return nil, errors.New("url is not a string")
+			return nil, errors.New("url should be string")
 		}
 		resp, err := callHost("curl", ParamType{"url": url})
 		if err != nil {
 			return nil, err
 		}
-		log("curl: " + to_json(resp))
+		log("calling host's curl: " + to_json(resp))
 		return "OK", nil
 	},
 }

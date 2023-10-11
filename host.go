@@ -45,7 +45,7 @@ type CallResp struct {
 }
 
 func NewHost() *Host {
-	h := &Host{}
+	h := new(Host)
 	builtinHostFuncs := map[string]HostFunc{
 		"list_modules": func(param ParamType) (ResultType, error) {
 			mods := make([]string, 0, len(h.loadedMods))
@@ -63,6 +63,7 @@ func NewHost() *Host {
 		},
 	}
 	h.builtinHostFuncs = builtinHostFuncs
+	h.loadedMods = make(map[string]api.Module)
 	return h
 }
 
@@ -89,9 +90,9 @@ func _callHost(ctx context.Context, m api.Module, offset, byteCount uint32) uint
 		return 0
 	}
 
+	// delegate to builtin host functions
 	var req CallReq
 	var resp CallResp
-	// delegate to builtin host functions
 	err := json.Unmarshal(buf, &req)
 	if err != nil {
 		log.Errorf("json.Unmarshal failed: %v", err)
@@ -123,6 +124,7 @@ E:
 	}
 	retPtr := uint32(ptr[0])
 	retSize := uint32(len(ret))
+	// hack from https://github.com/tetratelabs/wazero/blob/main/examples/allocation/tinygo/greet.go
 	return uint64(retPtr)<<32 | uint64(retSize)
 }
 

@@ -30,7 +30,7 @@ func TestCallFunc(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ret, err := host.Call(ctx, "hello_mod", "echo", map[string]interface{}{
+	ret, err := host.Call(ctx, "hello_mod", "echo", ParamType{
 		"msg": "hello world",
 	})
 	if err != nil {
